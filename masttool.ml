@@ -1,35 +1,71 @@
-type json =
-  | JNull
-  | JBool of bool
-  | JInt of Z.t
-  | JStr of string
-  | JArray of json list
-  | JObject of props
+(* MAST to JSON converter
 
-and props = (string * json) list
+Example:
 
-let rec print_json ff item : unit =
-  let open Format in
-  match item with
-  | JNull -> fprintf ff "null"
-  | JBool b -> fprintf ff "%s" (if b then "true" else "false")
-  | JInt i -> fprintf ff "%d" (Z.to_int i) (* XXX big int *)
-  | JStr s -> fprintf ff "\"%s\"" s (* XXX escaping *)
-  | JArray vs ->
-      let rec fmt_list ff vs =
-        match vs with
-        | [] -> ()
-        | [v] -> print_json ff v
-        | v :: vs -> fprintf ff "%a,@ %a" print_json v fmt_list vs in
-      fprintf ff "[@[<hov 0>%a@]]" fmt_list vs
-  | JObject ps ->
-      let rec fmt_props ff ps =
-        match ps with
-        | [] -> ()
-        | [(k, v)] -> fprintf ff "\"%s\": %a" k print_json v
-        | (k, v) :: rest ->
-            fprintf ff "\"%s\": %a,@ %a" k print_json v fmt_props rest in
-      fprintf ff "{@[<hv 0>%a@]}" fmt_props ps
+  def x := [1, "abc", null]; 3
+
+compiles to 122 bytes of mast. This JSON representation can be handy:
+
+{"magic": "Mont\340MAST",
+ "version": 1,
+ "exprs": [null, null,
+           {"NounExpr": "_makeList", "span": {"blob": [1, 6, 1, 25]}},
+           {"literal": 1, "span": {"str": [1, 10, 1, 11]}},
+           {"literal": "abc", "span": {"str": [1, 13, 1, 18]}},
+           {"NounExpr": "null", "span": {"str": [1, 20, 1, 24]}},
+           {"CallExpr": "run",
+            "target": 2,
+            "args": [3, 4, 5],
+            "named args": [],
+            "span": {"blob": [1, 6, 1, 25]}},
+           {"DefExpr": 0,
+            "exit": 1,
+            "rhs": 6,
+            "span": {"blob": [1, 0, 1, 25]}},
+           {"literal": 3, "span": {"blob": [1, 27, 2, 28]}},
+           {"SeqExpr": [7, 8], "span": {"blob": [1, 0, 2, 0]}}],
+ "patts": [{"FinalPatt": "x", "guard": 0, "span": {"str": [1, 0, 1, 5]}}]}
+
+ *)
+
+exception NotImplemented of string
+
+let todo s = raise (NotImplemented s)
+
+module JSON = struct
+  type t =
+    | JNull
+    | JBool of bool
+    | JInt of Z.t
+    | JStr of string
+    | JArray of t list
+    | JObject of props
+
+  and props = (string * t) list
+
+  let rec print_json ff item : unit =
+    let open Format in
+    match item with
+    | JNull -> fprintf ff "null"
+    | JBool b -> fprintf ff "%s" (if b then "true" else "false")
+    | JInt i -> fprintf ff "%d" (Z.to_int i) (* XXX big int *)
+    | JStr s -> fprintf ff "\"%s\"" s (* XXX escaping *)
+    | JArray vs ->
+        let rec fmt_list ff vs =
+          match vs with
+          | [] -> ()
+          | [v] -> print_json ff v
+          | v :: vs -> fprintf ff "%a,@ %a" print_json v fmt_list vs in
+        fprintf ff "[@[<hov 0>%a@]]" fmt_list vs
+    | JObject ps ->
+        let rec fmt_props ff ps =
+          match ps with
+          | [] -> ()
+          | [(k, v)] -> fprintf ff "\"%s\": %a" k print_json v
+          | (k, v) :: rest ->
+              fprintf ff "\"%s\": %a,@ %a" k print_json v fmt_props rest in
+        fprintf ff "{@[<hv 0>%a@]}" fmt_props ps
+end
 
 let reader inch =
   object
@@ -45,14 +81,12 @@ let reader inch =
 
 let mast_magic = "Mont\xe0MAST"
 
-exception NotImplemented of string
-
-let todo s = raise (NotImplemented s)
-
 exception InvalidMagic
 exception InvalidMAST
 
-let check_magic rd : props =
+open JSON
+
+let check_magic rd : JSON.props =
   for i = 0 to String.length mast_magic - 1 do
     if rd#read_char <> mast_magic.[i] then raise InvalidMagic
   done ;
@@ -69,20 +103,14 @@ let varint rd =
 
 let input_str rd = rd#read_string (Z.to_int (varint rd))
 
-let eat_span rd : json =
-  let tag = rd#read_char in
-  let v4 =
-    let i1 = varint rd in
-    let i2 = varint rd in
-    let i3 = varint rd in
-    let i4 = varint rd in
-    JArray [JInt i1; JInt i2; JInt i3; JInt i4]
-  and key =
+let eat_span rd : JSON.t =
+  let tag = rd#read_char and i4 = List.map varint [rd; rd; rd; rd] in
+  let key =
     match tag with 'S' -> "str" | 'B' -> "blob" | stag -> raise InvalidMAST
   in
-  JObject [(key, v4)]
+  JObject [(key, JArray (List.map (fun i -> JInt i) i4))]
 
-let eat_literal rd : json =
+let eat_literal rd : JSON.t =
   match rd#read_char with
   | 'N' ->
       ignore (eat_span rd) ;
@@ -102,7 +130,7 @@ let eat_literal rd : json =
       and s = eat_span rd in
       JObject [("literal", value); ("span", s)]
 
-let eat_tags rd : json list * json list =
+let eat_tags rd : JSON.t list * JSON.t list =
   let rec go exprs patts =
     let go_expr e = go (e :: exprs) patts
     and go_patt p = go exprs (p :: patts)
@@ -124,7 +152,7 @@ let eat_tags rd : json list * json list =
         and s = eat_span rd in
         go_patt (JObject (patt @ [("span", s)]))
     | Some tag ->
-        let expr : (string * json) list =
+        let expr : (string * JSON.t) list =
           match tag with
           | 'N' -> [("NounExpr", JStr (input_str rd))]
           | 'S' ->
@@ -147,7 +175,7 @@ let eat_tags rd : json list * json list =
         go_expr (JObject (expr @ [("span", s)])) in
   go [] []
 
-let decode_in inch : json =
+let decode_in inch : JSON.t =
   let rd = reader inch in
   let m = check_magic rd
   and exprs, patts = eat_tags rd
