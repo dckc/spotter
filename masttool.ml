@@ -19,14 +19,14 @@ let rec print_json ff item: unit =
      let rec fmt_list ff vs = match vs with
        | [] -> ()
        | [v] -> print_json ff v
-       | v::vs -> fprintf ff "%a, %a" print_json v fmt_list vs
-     in fprintf ff "[%a]" fmt_list vs
+       | v::vs -> fprintf ff "%a,@ %a" print_json v fmt_list vs
+     in fprintf ff "[@[<hov 0>%a@]]" fmt_list vs
   | JObject ps ->
      let rec fmt_props ff ps = match ps with
        | [] -> ()
        | [(k, v)] -> fprintf ff "\"%s\": %a" k print_json v
-       | (k, v)::rest -> fprintf ff "\"%s\": %a, %a" k print_json v fmt_props rest
-     in fprintf ff "{%a}" fmt_props ps
+       | (k, v)::rest -> fprintf ff "\"%s\": %a,@ %a" k print_json v fmt_props rest
+     in fprintf ff "{@[<hv 0>%a@]}" fmt_props ps
 
 let reader inch =
   object
