@@ -64,7 +64,6 @@ let varint rd =
   go 0 Z.zero
 
 let eat_span rd: json =
-  Printf.printf "(eat_span)\n";
   let tag = rd#read_char in
   let v4 =
     let i1 = varint rd in
@@ -104,6 +103,14 @@ let eat_tags rd: (json list * json list) =
        | Some tag ->
           (match tag with
            | 'L' -> go_expr (eat_literal rd)
+           | 'S' ->
+              let many f rd =
+                let l = Z.to_int (varint rd) in
+                List.init l (fun _ -> f rd)
+              and eat_expr rd = JInt (varint rd) in
+              let ixs = many eat_expr rd
+              and s = eat_span rd
+              in go_expr (JObject [("SeqExpr", JArray ixs); ("span", s)])
            | ch -> todo ("tag:" ^ (Char.escaped ch)))
   in go [] []
 
@@ -111,7 +118,8 @@ let decode_in inch: json =
   let rd =  (reader inch) in
   let m = check_magic rd
   and (exprs, patts) = eat_tags rd
-  in JObject (m @ [("exprs", JArray exprs); ("patts", JArray patts)])
+  and rev l = List.rev_append l []
+  in JObject (m @ [("exprs", JArray (rev exprs)); ("patts", JArray (rev patts))])
 
 let decode open_in_bin path = decode_in (open_in_bin path)
 
