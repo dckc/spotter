@@ -6,7 +6,7 @@ Example:
 
 compiles to 122 bytes of mast. This JSON representation can be handy:
 
-{"magic": "Mont\340MAST",
+{"magic": "Mont\xe0MAST",
  "version": 1,
  "exprs": [null, null,
            {"NounExpr": "_makeList", "span": {"blob": [1, 6, 1, 25]}},
@@ -43,13 +43,26 @@ module JSON = struct
 
   and props = (string * t) list
 
+  (* http://json.org/ *)
+  let char_lit ch : char Seq.t =
+    match ch with
+    | '"' -> List.to_seq ['\\'; '"']
+    | '\\' -> List.to_seq ['\\'; '\\']
+    | '\x00' .. '\x1f' ->
+        let hex4 = Printf.sprintf "\\u%04x" (Char.code ch) in
+        String.to_seq hex4
+    (* "Any codepoint except " or \ or control characters *)
+    | _ -> Seq.return ch
+
+  let str_lit_body s = String.of_seq (Seq.flat_map char_lit (String.to_seq s))
+
   let rec print_json ff item : unit =
     let open Format in
     match item with
     | JNull -> fprintf ff "null"
     | JBool b -> fprintf ff "%s" (if b then "true" else "false")
-    | JInt i -> fprintf ff "%d" (Z.to_int i) (* XXX big int *)
-    | JStr s -> fprintf ff "\"%s\"" s (* XXX escaping *)
+    | JInt i -> fprintf ff "%s" (Z.to_string i)
+    | JStr s -> fprintf ff "\"%s\"" (str_lit_body s)
     | JArray vs ->
         let rec fmt_list ff vs =
           match vs with
@@ -187,6 +200,6 @@ let decode open_in_bin path = decode_in (open_in_bin path)
 let main () =
   for i = 1 to Array.length Sys.argv - 1 do
     let path = Sys.argv.(i) in
-    Printf.printf "[%i] %s\n" i path ;
-    decode open_in_bin path
+    Printf.eprintf "[%i] %s\n" i path ;
+    print_json Format.std_formatter (decode open_in_bin path)
   done
