@@ -299,6 +299,7 @@ let string_of_span span =
   match span with OneToOne t -> "str:" ^ sos t | Blob t -> "blob:" ^ sos t
 
 type mexn =
+  | NotImplemented of (monte * string * monte list)
   | Refused of (monte * string * monte list * monte list)
   | Ejecting of (monte * monte)
   | DoubleThrown
@@ -309,6 +310,9 @@ type mexn =
 
 let string_of_mexn m =
   match m with
+  | NotImplemented (target, verb, args) ->
+      "XXX not implemented: " ^ target#stringOf ^ "." ^ verb ^ "/"
+      ^ string_of_int (List.length args)
   | Refused (target, verb, args, namedArgs) ->
       "Message refused: " ^ target#stringOf ^ "." ^ verb ^ "/"
       ^ string_of_int (List.length args)
@@ -559,6 +563,25 @@ let _makeMap : monte =
     method unwrap = None
   end
 
+let _equalizer : monte =
+  object (self)
+    method call verb args nargs =
+      match (verb, args) with
+      | "sameEver", [leftObj; rightObj] ->
+          Some
+            ( if leftObj == rightObj then boolObj true
+            else
+              match (leftObj#unwrap, rightObj#unwrap) with
+              | Some leftPrim, Some rightPrim -> boolObj (leftPrim = rightPrim)
+              | _ -> raise (MonteException (NotImplemented (self, verb, args)))
+            )
+      | _ -> None
+
+    method stringOf = "_equalizer"
+
+    method unwrap = None
+  end
+
 let todoObj name : monte =
   object
     method call verb args nargs = None
@@ -688,7 +711,7 @@ let safeScope =
     ; ("SemitransparentStamp", todoObj "SemitransparentStamp")
     ; ("SubrangeGuard", todoGuardObj "SubrangeGuard")
     ; ("TransparentStamp", todoObj "TransparentStamp"); ("Void", voidGuardObj)
-    ; ("_auditedBy", todoObj "_auditedBy"); ("_equalizer", todoObj "_equalizer")
+    ; ("_auditedBy", todoObj "_auditedBy"); ("_equalizer", _equalizer)
     ; ("_loop", _loop); ("_makeBytes", todoObj "_makeBytes")
     ; ("_makeDouble", todoObj "_makeDouble")
     ; ("_makeFinalSlot", todoObj "_makeFinalSlot")
