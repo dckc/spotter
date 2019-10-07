@@ -528,6 +528,20 @@ let unwrapList specimen =
   | Some (MList l) -> l
   | _ -> raise (MonteException (WrongType (MList [], specimen)))
 
+let unwrapPair specimen =
+  match specimen#unwrap with
+  | Some (MList [a; b]) -> (a, b)
+  (* XXX bad airity exception arm? *)
+  | _ ->
+      raise
+        (MonteException
+           (WrongType (MList [strObj "key"; strObj "val"], specimen)))
+
+let unwrapMap obj =
+  let keys = unwrapList (call_exn obj "getKeys" [] [])
+  and values = unwrapList (call_exn obj "getValues" [] []) in
+  List.combine keys values
+
 let unwrapBool specimen =
   match specimen#unwrap with
   | Some (MBool b) -> b
@@ -543,18 +557,7 @@ let _makeMap : monte =
     method call verb (args : monte list) namedArgs : monte option =
       match (verb, args) with
       | "fromPairs", [pairsObj] ->
-          let unwrapPair (itemList : monte list) =
-            match itemList with
-            | [k; v] -> (k, v)
-            | _ ->
-                raise
-                  (MonteException
-                     (WrongType
-                        (MList [strObj "key"; strObj "val"], listObj itemList)))
-          in
-          let pairs =
-            List.map unwrapPair (List.map unwrapList (unwrapList pairsObj))
-          in
+          let pairs = List.map unwrapPair (unwrapList pairsObj) in
           Some (mapObj pairs)
       | _ -> None
 
@@ -578,6 +581,27 @@ let _equalizer : monte =
       | _ -> None
 
     method stringOf = "_equalizer"
+
+    method unwrap = None
+  end
+
+let theMObj : monte =
+  object
+    method stringOf = "M"
+
+    method call verb args nargs =
+      match (verb, args) with
+      | "callWithMessage", [target; message] ->
+          let unwrapMessage specimen =
+            match specimen#unwrap with
+            | Some (MList [verbObj; argsObj; nargsObj]) ->
+                (unwrapStr verbObj, unwrapList argsObj, unwrapMap nargsObj)
+            | _ -> raise (MonteException (WrongType (MStr "", specimen))) in
+          let verb, args, nargs = unwrapMessage message in
+          Some (call_exn target verb args nargs)
+      | _ ->
+          Printf.printf "XXX TODO? M.%s/%d\n" verb (List.length args) ;
+          None
 
     method unwrap = None
   end
@@ -685,15 +709,11 @@ let makeScope (pairs : (string * monte) list) : monte Dict.t =
        (List.map (fun (k, v) -> (k, bindingObj (finalSlotObj v))) pairs))
 
 let unwrapScope obj =
+  let pairs = unwrapMap obj in
   let no_amp s =
     String.(if sub s 0 2 = "&&" then sub s 2 (length s - 2) else s) in
-  let keys =
-    List.map
-      (fun o -> no_amp (unwrapStr o))
-      (unwrapList (call_exn obj "getKeys" [] [])) in
-  let values = unwrapList (call_exn obj "getValues" [] []) in
-  let items = List.combine keys values in
-  Dict.of_seq (List.to_seq items)
+  let key_names = List.map (fun (k, v) -> (no_amp (unwrapStr k), v)) pairs in
+  Dict.of_seq (List.to_seq key_names)
 
 let safeScope =
   makeScope
@@ -720,12 +740,11 @@ let safeScope =
     ; ("false", boolObj false); ("null", nullObj)
     ; ("_makeSourceSpan", todoObj "_makeSourceSpan")
     ; ("_makeStr", todoObj "_makeStr"); ("_makeVarSlot", todoObj "_makeVarSlot")
-    ; ("M", todoObj "M"); ("_slotToBinding", todoObj "_slotToBinding")
+    ; ("M", theMObj); ("_slotToBinding", todoObj "_slotToBinding")
     ; ("loadMAST", todoObj "loadMAST"); ("makeLazySlot", todoObj "makeLazySlot")
     ; ("promiseAllFulfilled", todoObj "promiseAllFulfilled")
     ; ("throw", throwObj); ("Any", todoGuardObj "Any")
-    ; ("traceln", traceObj "\n"); ("M", todoObj "M"); ("true", boolObj true)
-    ; ("trace", traceObj "")
+    ; ("traceln", traceObj "\n"); ("true", boolObj true); ("trace", traceObj "")
     ; ("typhonAstBuilder", todoObj "typhonAstBuilder" (* XXX typhon objects? *))
     ; ("typhonAstEval", todoObj "typhonAstEval" (* XXX typhon objects? *)) ]
 
