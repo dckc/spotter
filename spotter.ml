@@ -823,6 +823,23 @@ module Compiler = struct
         (fun d (v, ps, nps, body) ->
           AtomDict.add (v, List.length ps) (ps, nps, body) d)
         AtomDict.empty meths in
+    let runMatcher env message matchPatt body ej : monte =
+      let _, env' = (matchPatt message ej) env in
+      let rv, _ = State.run body env' in
+      rv in
+    let runMatchers env verb args namedArgs : monte option =
+      let message = listObj [strObj verb; listObj args; mapObj namedArgs]
+      and ej, disable = ejectTo span in
+      let rec loop (ms : matcher list) : monte option =
+        match ms with
+        | [] -> None
+        | (patt, body) :: rest -> (
+          try
+            let rv = runMatcher env message patt body ej in
+            disable () ; Some rv
+          with MonteException (Ejecting (o, thrower)) when thrower == ej ->
+            loop rest ) in
+      loop matchs in
     State.bind
       (Option.value asOpt ~default:(State.return nullObj))
       (fun ase ->
@@ -831,29 +848,28 @@ module Compiler = struct
               object (self)
                 (* XXX method dispatch, matcher dispatch *)
                 method call verb args namedArgs : monte option =
-                  Printf.printf "(call: %s/%d)" verb (List.length args) ;
+                  let runMethod params nParams body =
+                    let exit = throwObj in
+                    (* XXX duplicate code with listPatt, refactor! *)
+                    let env' =
+                      List.fold_left2
+                        (fun ma p s -> State.and_then ma (p s exit))
+                        (State.return ()) params args in
+                    let env'' = State.and_then (namePatt self throwObj) env' in
+                    Printf.printf "\n(executing %s(" verb ;
+                    List.iter (fun a -> Printf.printf "%s, " a#stringOf) args ;
+                    Printf.printf ") at %s)" (string_of_span span) ;
+                    let o, _ = State.and_then env'' body s in
+                    Some o in
                   match
                     AtomDict.find_opt (verb, List.length args) methdict
                   with
-                  | None ->
-                      Printf.printf "no such method" ;
-                      None (* refused. XXX matchers *)
                   | Some (params, nParams, body) ->
-                      let exit = throwObj in
-                      (* XXX duplicate code with listPatt, refactor! *)
-                      let env' =
-                        List.fold_left2
-                          (fun ma p s -> State.and_then ma (p s exit))
-                          (State.return ()) params args in
-                      let env'' =
-                        State.and_then (namePatt self throwObj) env' in
-                      Printf.printf "\n(executing %s(" verb ;
-                      List.iter (fun a -> Printf.printf "%s, " a#stringOf) args ;
-                      Printf.printf ") at %s)" (string_of_span span) ;
-                      let o, _ = State.and_then env'' body s in
-                      Some o
+                      runMethod params nParams body
+                  | None ->
+                      (* XXX miranda *)
+                      runMatchers s verb args namedArgs
 
-                (* XXX miranda methods *)
                 (* XXX call printOn *)
                 method stringOf = "<user>"
 
