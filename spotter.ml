@@ -13,6 +13,7 @@ and monteprim =
   | MInt of Z.t
   | MStr of string
   | MList of monte list
+  | MMap of (monte * monte) list
 
 let prim_name p =
   match p with
@@ -23,6 +24,7 @@ let prim_name p =
   | MInt _ -> "Int"
   | MStr _ -> "Str"
   | MList _ -> "List"
+  | MMap _ -> "Map"
 
 (* Narrowing: Cast away extra non-private methods of Monte objects. *)
 let to_monte
@@ -167,11 +169,12 @@ let nullObj : monte =
     method unwrap = Some MNull
   end
 
-let boolObj b : monte =
+let rec boolObj b : monte =
   object
     method call verb args namedArgs =
       match (verb, args) with
       | "pick", [x; y] -> Some (if b then x else y)
+      | "not", [] -> Some (boolObj (not b))
       | _ -> None
 
     method stringOf = if b then "true" else "false"
@@ -353,6 +356,7 @@ let call_exn target verb args namedArgs : monte =
   | None -> (
     match (verb, args) with
     (* Miranda behaviors. *)
+    | "_conformTo", [_] -> nullObj
     | "_sealedDispatch", [_] -> nullObj
     | "_uncall", [] -> nullObj
     | _ ->
@@ -471,8 +475,7 @@ and flexListObj (init : monte list) : monte =
   end
 
 and mapObj (pairs : (monte * monte) list) : monte =
-  (* XXX make sure ej doesn't return. *)
-  let throwStr ej msg = call_exn ej "run" [strObj msg] [] in
+  let throwStr ej msg = call_exn throwObj "eject" [ej; strObj msg] [] in
   (* An iterator on a map, producing its keys and values. *)
   let _makeIterator () =
     object
@@ -509,8 +512,7 @@ and mapObj (pairs : (monte * monte) list) : monte =
       let items = String.concat ", " (List.map item pairs) in
       "[" ^ items ^ "]"
 
-    method unwrap = None
-    (* XXX? Map unwrap? *)
+    method unwrap = Some (MMap pairs)
   end
 
 let _makeList : monte =
@@ -537,10 +539,10 @@ let unwrapPair specimen =
         (MonteException
            (WrongType (MList [strObj "key"; strObj "val"], specimen)))
 
-let unwrapMap obj =
-  let keys = unwrapList (call_exn obj "getKeys" [] [])
-  and values = unwrapList (call_exn obj "getValues" [] []) in
-  List.combine keys values
+let unwrapMap specimen =
+  match specimen#unwrap with
+  | Some (MMap pairs) -> pairs
+  | _ -> raise (MonteException (WrongType (MMap [], specimen)))
 
 let unwrapBool specimen =
   match specimen#unwrap with
@@ -606,6 +608,22 @@ let theMObj : monte =
     method unwrap = None
   end
 
+let theRefObj : monte =
+  object
+    method stringOf = "Ref"
+
+    method call verb args nargs =
+      match (verb, args) with
+      | "isNear", [specimen] ->
+          Printf.printf "\nXXX TODO: Ref.isNear with promises and such\n" ;
+          Some (boolObj true)
+      | _ ->
+          Printf.printf "\nXXX TODO? Ref.%s/%d\n" verb (List.length args) ;
+          None
+
+    method unwrap = None
+  end
+
 let todoObj name : monte =
   object
     method call verb args nargs = None
@@ -618,19 +636,19 @@ let todoObj name : monte =
 let funObj name f : monte =
   object
     method call verb args nargs =
-      match verb with "run" -> Some (f args nargs) | _ -> None
+      match verb with "run" -> f args nargs | _ -> None
 
     method stringOf = name
 
     method unwrap = None
   end
 
-let traceObj name suffix (print_str : string -> unit) : monte =
+let traceObj name suffix (print_str : string -> unit) =
   funObj name (fun args nargs ->
       print_str " ~ " ;
       List.iter (fun obj -> print_str obj#stringOf ; print_str ", ") args ;
       print_str suffix ;
-      nullObj)
+      Some nullObj)
 
 let calling verb args namedArgs target = call_exn target verb args namedArgs
 let prettyPrint formatter obj = Format.pp_print_string formatter obj#stringOf
@@ -726,7 +744,7 @@ let safeScope print_str =
     ; ("NaN", doubleObj nan); ("Int", dataGuardObj (MInt Z.zero))
     ; ("Near", todoGuardObj "Near")
     ; ("KernelAstStamp", todoObj "KernelAstStamp")
-    ; ("Same", todoGuardObj "Same"); ("Ref", todoObj "Ref")
+    ; ("Same", todoGuardObj "Same"); ("Ref", theRefObj)
     ; ("astEval", todoObj "astEval"); ("Selfless", todoGuardObj "Selfless")
     ; ("Str", todoGuardObj "Str")
     ; ("SemitransparentStamp", todoObj "SemitransparentStamp")
@@ -1256,6 +1274,19 @@ let getMonteFileObj read_mast : monte =
     method unwrap = None
   end
 
+let typhonUtils =
+  let isMapObj =
+    funObj "isMap" (fun args nargs ->
+        match args with
+        | [specimen] ->
+            Some
+              (boolObj
+                 ( match specimen#unwrap with
+                 | Some (MMap _) -> true
+                 | _ -> false ))
+        | _ -> None) in
+  [("isMap", isMapObj)]
+
 (* limit use of ambient authority to this top-level expression. *)
 let () =
   let read_mast filename : Compiler.t =
@@ -1267,7 +1298,8 @@ let () =
     let pick k x y = None in
     Dict.union pick
       (safeScope (fun s -> Printf.printf "%s" s))
-      (makeScope [("getMonteFile", getMonteFileObj read_mast)]) in
+      (makeScope (typhonUtils @ [("getMonteFile", getMonteFileObj read_mast)]))
+  in
   for i = 1 to Array.length Sys.argv - 1 do
     let filename = Sys.argv.(i) in
     try
