@@ -615,21 +615,22 @@ let todoObj name : monte =
     method unwrap = None
   end
 
-let traceObj suffix : monte =
+let funObj name f : monte =
   object
     method call verb args nargs =
-      match verb with
-      | "run" ->
-          Printf.printf " ~ " ;
-          List.iter (fun obj -> Printf.printf "%s, " obj#stringOf) args ;
-          Printf.printf "%s" suffix ;
-          Some nullObj
-      | _ -> None
+      match verb with "run" -> Some (f args nargs) | _ -> None
 
-    method stringOf = "trace"
+    method stringOf = name
 
     method unwrap = None
   end
+
+let traceObj name suffix (print_str : string -> unit) : monte =
+  funObj name (fun args nargs ->
+      print_str " ~ " ;
+      List.iter (fun obj -> print_str obj#stringOf ; print_str ", ") args ;
+      print_str suffix ;
+      nullObj)
 
 let calling verb args namedArgs target = call_exn target verb args namedArgs
 let prettyPrint formatter obj = Format.pp_print_string formatter obj#stringOf
@@ -715,7 +716,7 @@ let unwrapScope obj =
   let key_names = List.map (fun (k, v) -> (no_amp (unwrapStr k), v)) pairs in
   Dict.of_seq (List.to_seq key_names)
 
-let safeScope =
+let safeScope print_str =
   makeScope
     [ ("Bool", dataGuardObj (MBool true)); ("Bytes", todoGuardObj "Bytes")
     ; ("Char", dataGuardObj (MChar 32))
@@ -744,7 +745,8 @@ let safeScope =
     ; ("loadMAST", todoObj "loadMAST"); ("makeLazySlot", todoObj "makeLazySlot")
     ; ("promiseAllFulfilled", todoObj "promiseAllFulfilled")
     ; ("throw", throwObj); ("Any", todoGuardObj "Any")
-    ; ("traceln", traceObj "\n"); ("true", boolObj true); ("trace", traceObj "")
+    ; ("traceln", traceObj "traceln" "\n" print_str); ("true", boolObj true)
+    ; ("trace", traceObj "trace" "" print_str)
     ; ("typhonAstBuilder", todoObj "typhonAstBuilder" (* XXX typhon objects? *))
     ; ("typhonAstEval", todoObj "typhonAstEval" (* XXX typhon objects? *)) ]
 
@@ -1263,7 +1265,8 @@ let () =
     close_in ic ; rv in
   let ioScope : monte Dict.t =
     let pick k x y = None in
-    Dict.union pick safeScope
+    Dict.union pick
+      (safeScope (fun s -> Printf.printf "%s" s))
       (makeScope [("getMonteFile", getMonteFileObj read_mast)]) in
   for i = 1 to Array.length Sys.argv - 1 do
     let filename = Sys.argv.(i) in
