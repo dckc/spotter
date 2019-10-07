@@ -441,6 +441,16 @@ let flexMapObj (init : (monte * monte) list) : monte =
     method unwrap = None
   end
 
+let sameEver leftObj rightObj : bool =
+  if leftObj == rightObj then true
+  else
+    match (leftObj#unwrap, rightObj#unwrap) with
+    | Some leftPrim, Some rightPrim -> leftPrim = rightPrim
+    | _ ->
+        raise
+          (MonteException
+             (NotImplemented (nullObj, "sameEver", [leftObj; rightObj])))
+
 let rec listObj l : monte =
   object
     method call verb args namedArgs =
@@ -499,7 +509,15 @@ and mapObj (pairs : (monte * monte) list) : monte =
   object
     method call (verb : string) (args : monte list) namedArgs : monte option =
       match (verb, args) with
+      (* XXX O(n) *)
+      | "contains", [needle] ->
+          Some (boolObj (List.exists (fun (k, _) -> sameEver k needle) pairs))
       | "diverge", [] -> Some (flexMapObj pairs)
+      | "get", [needle] ->
+          Some
+            ( match List.find_opt (fun (k, _) -> sameEver k needle) pairs with
+            | Some (_, v) -> v
+            | _ -> throwStr throwObj "not found" )
       | "getKeys", [] -> Some (listObj (List.map fst pairs))
       | "getValues", [] -> Some (listObj (List.map snd pairs))
       | "_makeIterator", [] -> Some (_makeIterator ())
@@ -573,13 +591,7 @@ let _equalizer : monte =
     method call verb args nargs =
       match (verb, args) with
       | "sameEver", [leftObj; rightObj] ->
-          Some
-            ( if leftObj == rightObj then boolObj true
-            else
-              match (leftObj#unwrap, rightObj#unwrap) with
-              | Some leftPrim, Some rightPrim -> boolObj (leftPrim = rightPrim)
-              | _ -> raise (MonteException (NotImplemented (self, verb, args)))
-            )
+          Some (boolObj (sameEver leftObj rightObj))
       | _ -> None
 
     method stringOf = "_equalizer"
