@@ -466,7 +466,7 @@ module type SAMENESS = sig
   val _equalizer : monte
 end
 
-module Sameness (D : ATOMIC_DATA) (C : CALLING) = struct
+module Sameness (D : ATOMIC_DATA) = struct
   let sameEver leftObj rightObj : bool =
     if leftObj == rightObj then true
     else
@@ -492,7 +492,7 @@ module Sameness (D : ATOMIC_DATA) (C : CALLING) = struct
 end
 
 module Collections (D : ATOMIC_DATA) (C : CALLING) = struct
-  module EQ = Sameness (D) (C)
+  module EQ = Sameness (D)
 
   let flexMapObj (init : (monte * monte) list) : monte =
     object
@@ -674,7 +674,7 @@ module SafeScope = struct
   and CD : COLLECTIONS = Collections (D) (C)
   and C : CALLING = Calling (D) (CD)
 
-  module EQ = Sameness (D) (C)
+  module EQ = Sameness (D)
   module S = SlotsAndBindings
 
   let makeScope (pairs : (string * monte) list) : monte Dict.t =
