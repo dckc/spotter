@@ -760,7 +760,7 @@ let safeScope print_str =
     ; ("KernelAstStamp", todoObj "KernelAstStamp")
     ; ("Same", todoGuardObj "Same"); ("Ref", theRefObj)
     ; ("astEval", todoObj "astEval"); ("Selfless", todoGuardObj "Selfless")
-    ; ("Str", todoGuardObj "Str")
+    ; ("Str", dataGuardObj (MStr ""))
     ; ("SemitransparentStamp", todoObj "SemitransparentStamp")
     ; ("SubrangeGuard", todoGuardObj "SubrangeGuard")
     ; ("TransparentStamp", todoObj "TransparentStamp"); ("Void", voidGuardObj)
