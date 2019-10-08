@@ -81,13 +81,6 @@ module UTF8D = struct
           | Cons (b3, b4n) -> Error ([b0; b1; b2; b3], b4n) ) ) )
 end
 
-let rec seq_of_chan inch : int Seq.t =
- fun () ->
-  try
-    let b0 = input_byte inch in
-    Seq.Cons (b0, seq_of_chan inch)
-  with End_of_file -> Nil
-
 module type MAST = sig
   type span
 
@@ -1203,9 +1196,15 @@ module MASTContext (Monte : MAST) = struct
                   let e =
                     match tag with
                     | 'C' -> (
-                      match UTF8D.decode1 (seq_of_chan ic) with
-                      | Ok (code, _) -> Monte.charExpr code
-                      | Error (bs, _) -> throw_invalid_mast ic "bad utf8" )
+                        let rec seq_of_chan inch : int Seq.t =
+                         fun () ->
+                          try
+                            let b0 = input_byte inch in
+                            Seq.Cons (b0, seq_of_chan inch)
+                          with End_of_file -> Nil in
+                        match UTF8D.decode1 (seq_of_chan ic) with
+                        | Ok (code, _) -> Monte.charExpr code
+                        | Error (bs, _) -> throw_invalid_mast ic "bad utf8" )
                     | 'I' ->
                         let i = input_varint ic in
                         let shifted = Z.shift_right i 1 in
