@@ -521,6 +521,8 @@ and mapObj (pairs : (monte * monte) list) : monte =
       | "getKeys", [] -> Some (listObj (List.map fst pairs))
       | "getValues", [] -> Some (listObj (List.map snd pairs))
       | "_makeIterator", [] -> Some (_makeIterator ())
+      | "without", [k0] ->
+          Some (mapObj (List.filter (fun (k, v) -> not (sameEver k k0)) pairs))
       | _ ->
           Printf.printf "\nXXX Map verb todo? %s\n" verb ;
           None
