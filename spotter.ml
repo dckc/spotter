@@ -535,6 +535,31 @@ and mapObj (pairs : (monte * monte) list) : monte =
     method unwrap = Some (MMap pairs)
   end
 
+let ejectTo span =
+  let ej =
+    object (self)
+      val mutable thrown = false
+
+      method disable =
+        if thrown then raise (MonteException DoubleThrown) ;
+        thrown <- true
+
+      method private throw v =
+        self#disable ;
+        raise (MonteException (Ejecting (v, to_monte self)))
+
+      method call verb args namedArgs =
+        match (verb, args) with
+        | "run", [v] -> self#throw v
+        | "run", [] -> self#throw nullObj
+        | _ -> None
+
+      method stringOf = "<ejector at " ^ string_of_span span ^ ">"
+
+      method unwrap = None
+    end in
+  (to_monte ej, fun () -> ej#disable)
+
 let _makeList : monte =
   object
     method call verb args namedArgs =
@@ -686,31 +711,6 @@ let input_span ic =
   | 'B' ->
       Blob (input_varint ic, input_varint ic, input_varint ic, input_varint ic)
   | _ -> throw_invalid_mast ic "input_span"
-
-let ejectTo span =
-  let ej =
-    object (self)
-      val mutable thrown = false
-
-      method disable =
-        if thrown then raise (MonteException DoubleThrown) ;
-        thrown <- true
-
-      method private throw v =
-        self#disable ;
-        raise (MonteException (Ejecting (v, to_monte self)))
-
-      method call verb args namedArgs =
-        match (verb, args) with
-        | "run", [v] -> self#throw v
-        | "run", [] -> self#throw nullObj
-        | _ -> None
-
-      method stringOf = "<ejector at " ^ string_of_span span ^ ">"
-
-      method unwrap = None
-    end in
-  (to_monte ej, fun () -> ej#disable)
 
 let _loop : monte =
   object
