@@ -1289,17 +1289,18 @@ let getMonteFileObj read_mast : monte =
   end
 
 let typhonUtils =
-  let isMapObj =
-    funObj "isMap" (fun args nargs ->
+  let predicateObj name test =
+    funObj name (fun args nargs ->
         match args with
-        | [specimen] ->
-            Some
-              (boolObj
-                 ( match specimen#unwrap with
-                 | Some (MMap _) -> true
-                 | _ -> false ))
+        | [specimen] -> Some (boolObj (test specimen))
         | _ -> None) in
-  [("isMap", isMapObj)]
+  let isMapObj =
+    predicateObj "isMap" (fun specimen ->
+        match specimen#unwrap with Some (MMap _) -> true | _ -> false)
+  and isListObj =
+    predicateObj "isList" (fun specimen ->
+        match specimen#unwrap with Some (MList _) -> true | _ -> false) in
+  [("isList", isListObj); ("isMap", isMapObj)]
 
 (* limit use of ambient authority to this top-level expression. *)
 let () =
