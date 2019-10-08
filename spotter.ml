@@ -722,8 +722,8 @@ let _loop : monte =
             let values = call_exn iterator "next" [ej] [] in
             ignore (call_exn consumer "run" (unwrapList values) []) ;
             next ()
-          with MonteException (Ejecting (e, _)) as ex ->
-            if e == ej then nullObj else raise ex in
+          with MonteException (Ejecting (_, thrower)) as ex ->
+            if thrower == ej then nullObj else raise ex in
         next () in
       match (verb, args) with
       | "run", [iterable; consumer] -> Some (run iterable consumer)
