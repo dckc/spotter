@@ -26,6 +26,8 @@ let prim_name p =
   | MList _ -> "List"
   | MMap _ -> "Map"
 
+let prettyPrint formatter obj = Format.pp_print_string formatter obj#stringOf
+
 (* Narrowing: Cast away extra non-private methods of Monte objects. *)
 let to_monte
     (m :
@@ -42,6 +44,16 @@ let nullObj : monte =
     method stringOf = "<null>"
 
     method unwrap = Some MNull
+  end
+
+let funObj name f : monte =
+  object
+    method call verb args nargs =
+      match verb with "run" -> f args nargs | _ -> None
+
+    method stringOf = name
+
+    method unwrap = None
   end
 
 type mspan =
@@ -122,8 +134,6 @@ module type CALLING = sig
   val _loop : unit -> monte (* XXX singlton *)
 
   val throwStr : monte -> string -> monte
-  val getMObj : unit -> monte
-  val getRefObj : unit -> monte
 end
 
 module type ATOMIC_DATA = sig
@@ -399,7 +409,7 @@ module type STORAGE = sig
   val varSlotObj : monte -> monte
 end
 
-module SlotsAndBindings (D : ATOMIC_DATA) = struct
+module SlotsAndBindings = struct
   let bindingObj slot : monte =
     object
       method call verb args namedArgs =
@@ -495,65 +505,7 @@ module Calling (D : ATOMIC_DATA) (CD : COLLECTIONS) = struct
 
       method unwrap = None
     end
-
-  let theMObj : monte =
-    object
-      method stringOf = "M"
-
-      method call verb args nargs =
-        match (verb, args) with
-        | "callWithMessage", [target; message] ->
-            let unwrapMessage specimen =
-              match specimen#unwrap with
-              | Some (MList [verbObj; argsObj; nargsObj]) ->
-                  ( D.unwrapStr verbObj
-                  , CD.unwrapList argsObj
-                  , CD.unwrapMap nargsObj )
-              | _ -> raise (MonteException (WrongType (MStr "", specimen)))
-            in
-            let verb, args, nargs = unwrapMessage message in
-            Some (call_exn target verb args nargs)
-        | _ ->
-            Printf.printf "XXX TODO? M.%s/%d\n" verb (List.length args) ;
-            None
-
-      method unwrap = None
-    end
-
-  let getMObj () = theMObj
-
-  let theRefObj : monte =
-    object
-      method stringOf = "Ref"
-
-      method call verb args nargs =
-        match (verb, args) with
-        | "isNear", [specimen] ->
-            Printf.printf "\nXXX TODO: Ref.isNear with promises and such\n" ;
-            Some (D.boolObj true)
-        | _ ->
-            Printf.printf "\nXXX TODO? Ref.%s/%d\n" verb (List.length args) ;
-            None
-
-      method unwrap = None
-    end
-
-  let getRefObj () = theRefObj
 end
-
-let todoGuardObj name : monte =
-  object
-    method call verb args nargs =
-      match (verb, args) with
-      | "coerce", [specimen; exit] ->
-          Printf.printf "\nXXX %s.coerce(...) not implemented\n" name ;
-          Some specimen
-      | _ -> None
-
-    method stringOf = "DeepFrozenStamp"
-
-    method unwrap = None
-  end
 
 module type SAMENESS = sig
   val sameEver : monte -> monte -> bool
@@ -763,54 +715,13 @@ module Collections (D : ATOMIC_DATA) (C : CALLING) = struct
     end
 end
 
-let todoObj name : monte =
-  object
-    method call verb args nargs = None
-
-    method stringOf = name
-
-    method unwrap = None
-  end
-
-let funObj name f : monte =
-  object
-    method call verb args nargs =
-      match verb with "run" -> f args nargs | _ -> None
-
-    method stringOf = name
-
-    method unwrap = None
-  end
-
-let prettyPrint formatter obj = Format.pp_print_string formatter obj#stringOf
-
-let input_varint ic =
-  let rec go shift acc =
-    let b = Z.of_int (input_byte ic) in
-    let n = Z.logor acc (Z.shift_left (Z.logand b (Z.of_int 0x7f)) shift) in
-    if not (Z.testbit b 7) then n else go (shift + 7) n in
-  go 0 Z.zero
-
-exception InvalidMAST of (string * int)
-
-let throw_invalid_mast ic message = raise (InvalidMAST (message, pos_in ic))
-
-let input_span ic =
-  match input_char ic with
-  | 'S' ->
-      OneToOne
-        (input_varint ic, input_varint ic, input_varint ic, input_varint ic)
-  | 'B' ->
-      Blob (input_varint ic, input_varint ic, input_varint ic, input_varint ic)
-  | _ -> throw_invalid_mast ic "input_span"
-
 module SafeScope = struct
   module rec D : ATOMIC_DATA = AtomicData (C)
   and CD : COLLECTIONS = Collections (D) (C)
   and C : CALLING = Calling (D) (CD)
 
   module EQ = Sameness (D) (C)
-  module S = SlotsAndBindings (D)
+  module S = SlotsAndBindings
 
   let makeScope (pairs : (string * monte) list) : monte Dict.t =
     Dict.of_seq
@@ -824,6 +735,69 @@ module SafeScope = struct
         print_str suffix ;
         Some nullObj)
 
+  let theMObj : monte =
+    object
+      method stringOf = "M"
+
+      method call verb args nargs =
+        match (verb, args) with
+        | "callWithMessage", [target; message] ->
+            let unwrapMessage specimen =
+              match specimen#unwrap with
+              | Some (MList [verbObj; argsObj; nargsObj]) ->
+                  ( D.unwrapStr verbObj
+                  , CD.unwrapList argsObj
+                  , CD.unwrapMap nargsObj )
+              | _ -> raise (MonteException (WrongType (MStr "", specimen)))
+            in
+            let verb, args, nargs = unwrapMessage message in
+            Some (call_exn target verb args nargs)
+        | _ ->
+            Printf.printf "XXX TODO? M.%s/%d\n" verb (List.length args) ;
+            None
+
+      method unwrap = None
+    end
+
+  let theRefObj : monte =
+    object
+      method stringOf = "Ref"
+
+      method call verb args nargs =
+        match (verb, args) with
+        | "isNear", [specimen] ->
+            Printf.printf "\nXXX TODO: Ref.isNear with promises and such\n" ;
+            Some (D.boolObj true)
+        | _ ->
+            Printf.printf "\nXXX TODO? Ref.%s/%d\n" verb (List.length args) ;
+            None
+
+      method unwrap = None
+    end
+
+  let todoGuardObj name : monte =
+    object
+      method call verb args nargs =
+        match (verb, args) with
+        | "coerce", [specimen; exit] ->
+            Printf.printf "\nXXX %s.coerce(...) not implemented\n" name ;
+            Some specimen
+        | _ -> None
+
+      method stringOf = "DeepFrozenStamp"
+
+      method unwrap = None
+    end
+
+  let todoObj name : monte =
+    object
+      method call verb args nargs = None
+
+      method stringOf = name
+
+      method unwrap = None
+    end
+
   let safeScope print_str =
     makeScope
       [ ("Bool", D.dataGuardObj (MBool true)); ("Bytes", todoGuardObj "Bytes")
@@ -834,7 +808,7 @@ module SafeScope = struct
       ; ("Infinity", D.doubleObj infinity); ("NaN", D.doubleObj nan)
       ; ("Int", D.dataGuardObj (MInt Z.zero)); ("Near", todoGuardObj "Near")
       ; ("KernelAstStamp", todoObj "KernelAstStamp")
-      ; ("Same", todoGuardObj "Same"); ("Ref", C.getRefObj ())
+      ; ("Same", todoGuardObj "Same"); ("Ref", theRefObj)
       ; ("astEval", todoObj "astEval"); ("Selfless", todoGuardObj "Selfless")
       ; ("Str", D.dataGuardObj (MStr ""))
       ; ("SemitransparentStamp", todoObj "SemitransparentStamp")
@@ -850,7 +824,7 @@ module SafeScope = struct
       ; ("false", D.boolObj false); ("null", nullObj)
       ; ("_makeSourceSpan", todoObj "_makeSourceSpan")
       ; ("_makeStr", todoObj "_makeStr")
-      ; ("_makeVarSlot", todoObj "_makeVarSlot"); ("M", C.getMObj ())
+      ; ("_makeVarSlot", todoObj "_makeVarSlot"); ("M", theMObj)
       ; ("_slotToBinding", todoObj "_slotToBinding")
       ; ("loadMAST", todoObj "loadMAST")
       ; ("makeLazySlot", todoObj "makeLazySlot")
@@ -1120,42 +1094,68 @@ struct
     State.modify (Dict.add noun specimen)
 end
 
-let input_str ic = really_input_string ic (Z.to_int (input_varint ic))
+module InputTools = struct
+  let input_varint ic =
+    let rec go shift acc =
+      let b = Z.of_int (input_byte ic) in
+      let n = Z.logor acc (Z.shift_left (Z.logand b (Z.of_int 0x7f)) shift) in
+      if not (Z.testbit b 7) then n else go (shift + 7) n in
+    go 0 Z.zero
 
-let input_many f ic =
-  let l = Z.to_int (input_varint ic) in
-  List.init l (fun _ -> f ic)
+  exception InvalidMAST of (string * int)
 
-(* A growing mutable list that is indexed backwards. Simulates a portion of
- * the Python list API. *)
-let backlist () =
-  object
-    val mutable l = []
+  let throw_invalid_mast ic message = raise (InvalidMAST (message, pos_in ic))
 
-    val mutable len = 0
+  let input_span ic =
+    match input_char ic with
+    | 'S' ->
+        OneToOne
+          (input_varint ic, input_varint ic, input_varint ic, input_varint ic)
+    | 'B' ->
+        Blob
+          (input_varint ic, input_varint ic, input_varint ic, input_varint ic)
+    | _ -> throw_invalid_mast ic "input_span"
 
-    method push x =
-      l <- x :: l ;
-      len <- len + 1
+  let input_str ic = really_input_string ic (Z.to_int (input_varint ic))
 
-    method get i = List.nth l (len - 1 - i)
+  let input_many f ic =
+    let l = Z.to_int (input_varint ic) in
+    List.init l (fun _ -> f ic)
 
-    method tl = List.hd l
-  end
+  (* A growing mutable list that is indexed backwards. Simulates a portion of
+   * the Python list API. *)
+  let backlist () =
+    object
+      val mutable l = []
 
-exception InvalidMagic
+      val mutable len = 0
 
-let mast_magic = "Mont\xe0MAST\x01"
+      method push x =
+        l <- x :: l ;
+        len <- len + 1
 
-let open_in_mast path =
-  let ic = open_in_bin path in
-  (* Check the magic number. *)
-  for i = 0 to String.length mast_magic - 1 do
-    if input_char ic <> mast_magic.[i] then (close_in ic ; raise InvalidMagic)
-  done ;
-  ic
+      method get i = List.nth l (len - 1 - i)
+
+      method tl = List.hd l
+    end
+
+  exception InvalidMagic
+
+  let mast_magic = "Mont\xe0MAST\x01"
+
+  let open_in_mast path =
+    let ic = open_in_bin path in
+    (* Check the magic number. *)
+    for i = 0 to String.length mast_magic - 1 do
+      if input_char ic <> mast_magic.[i] then (
+        close_in ic ; raise InvalidMagic )
+    done ;
+    ic
+end
 
 module MASTContext (Monte : MAST) = struct
+  open InputTools
+
   type masthack =
     | HNone
     | HExpr of Monte.t
@@ -1367,7 +1367,7 @@ module Loader = struct
   module rec D : ATOMIC_DATA = AtomicData (C)
   and CD : COLLECTIONS = Collections (D) (C)
   and C : CALLING = Calling (D) (CD)
-  and S : STORAGE = SlotsAndBindings (D)
+  and S : STORAGE = SlotsAndBindings
 
   module Compiler = Compiler (D) (CD) (C) (S)
   module M = MASTContext (Compiler)
@@ -1433,7 +1433,7 @@ module Loader = struct
   let main argv =
     let open SafeScope in
     let read_mast filename : Compiler.t =
-      let ic = open_in_mast filename in
+      let ic = InputTools.open_in_mast filename in
       let context = M.make () in
       let rv = context#eat_last_expr ic in
       close_in ic ; rv in
