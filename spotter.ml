@@ -451,13 +451,46 @@ let sameEver leftObj rightObj : bool =
           (MonteException
              (NotImplemented (nullObj, "sameEver", [leftObj; rightObj])))
 
-let rec listObj l : monte =
+let throwStr ej msg = call_exn throwObj "eject" [ej; strObj msg] []
+
+let rec _makeIterator name (init : (monte * monte) Seq.t) : monte =
+  object
+    val mutable _produce = init
+
+    method call verb args nargs =
+      match (verb, args) with
+      | "next", [ej] -> (
+        match _produce () with
+        | Nil -> Some (throwStr ej "next/1: Iterator exhausted")
+        | Cons ((k, v), rest) ->
+            let rv = listObj [k; v] in
+            _produce <- rest ;
+            Some rv )
+      | _ -> None
+
+    method stringOf = name
+
+    method unwrap = None
+  end
+
+and _makeListterator name items : monte =
+  let range lo hi =
+    let rec loop n acc = if n < lo then acc else loop (n - 1) (n :: acc) in
+    loop (hi - 1) [] in
+  let pairs =
+    List.combine
+      (List.map (fun i -> intObj (Z.of_int i)) (range 0 (List.length items)))
+      items in
+  _makeIterator name (List.to_seq pairs)
+
+and listObj l : monte =
   object
     method call verb args namedArgs =
       match (verb, args) with
       | "asMap", [] when l = [] -> Some (mapObj [])
       | "diverge", [] -> Some (flexListObj l)
       | "size", [] -> Some (intObj (Z.of_int (List.length l)))
+      | "_makeIterator", [] -> Some (_makeListterator "<listIterator>" l)
       | _ -> None
 
     method stringOf =
@@ -485,27 +518,6 @@ and flexListObj (init : monte list) : monte =
   end
 
 and mapObj (pairs : (monte * monte) list) : monte =
-  let throwStr ej msg = call_exn throwObj "eject" [ej; strObj msg] [] in
-  (* An iterator on a map, producing its keys and values. *)
-  let _makeIterator () =
-    object
-      val mutable _index = 0
-
-      method call verb args nargs =
-        match (verb, args) with
-        | "next", [ej] ->
-            if _index < List.length pairs then (
-              let k, v = List.nth pairs _index in
-              let rv = listObj [k; v] in
-              _index <- _index + 1 ;
-              Some rv )
-            else Some (throwStr ej "next/1: Iterator exhausted")
-        | _ -> None
-
-      method stringOf = "<mapIterator>"
-
-      method unwrap = None
-    end in
   object
     method call (verb : string) (args : monte list) namedArgs : monte option =
       match (verb, args) with
@@ -520,9 +532,10 @@ and mapObj (pairs : (monte * monte) list) : monte =
             | _ -> throwStr throwObj "not found" )
       | "getKeys", [] -> Some (listObj (List.map fst pairs))
       | "getValues", [] -> Some (listObj (List.map snd pairs))
-      | "_makeIterator", [] -> Some (_makeIterator ())
       | "without", [k0] ->
           Some (mapObj (List.filter (fun (k, v) -> not (sameEver k k0)) pairs))
+      | "_makeIterator", [] ->
+          Some (_makeIterator "<mapIterator>" (List.to_seq pairs))
       | _ ->
           Printf.printf "\nXXX Map verb todo? %s\n" verb ;
           None
@@ -563,7 +576,23 @@ let ejectTo span =
 let _makeList : monte =
   object
     method call verb args namedArgs =
-      match verb with "run" -> Some (listObj args) | _ -> None
+      match (verb, args) with
+      | "fromIterable", [iterable] ->
+          let build () =
+            let iterator = call_exn iterable "_makeIterator" [] [] in
+            let no_span (* XXX *) : mspan =
+              Blob (Z.zero, Z.zero, Z.zero, Z.zero) in
+            let ej, _ = ejectTo no_span in
+            let rec loop revlist =
+              try
+                let item = call_exn iterator "next" [ej] [] in
+                loop (item :: revlist)
+              with MonteException (Ejecting (_, thrower)) as ex ->
+                if thrower == ej then revlist else raise ex in
+            loop [] in
+          Some (listObj (List.rev_append (build ()) []))
+      | "run", _ -> Some (listObj args)
+      | _ -> None
 
     method stringOf = "_makeList"
 
