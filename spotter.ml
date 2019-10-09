@@ -502,7 +502,7 @@ module Collections (D : ATOMIC_DATA) (C : CALLING) = struct
       method unwrap : monteprim option = None
     end
 
-  and _makeListterator name items : monte =
+  and _makeListIterator name items : monte =
     let range lo hi =
       let rec loop n acc = if n < lo then acc else loop (n - 1) (n :: acc) in
       loop (hi - 1) [] in
@@ -521,7 +521,7 @@ module Collections (D : ATOMIC_DATA) (C : CALLING) = struct
         | "asMap", [] when l = [] -> Some (mapObj [])
         | "diverge", [] -> Some (flexListObj l)
         | "size", [] -> Some (D.intObj (Z.of_int (List.length l)))
-        | "_makeIterator", [] -> Some (_makeListterator "<listIterator>" l)
+        | "_makeIterator", [] -> Some (_makeListIterator "<listIterator>" l)
         | _ -> None
 
       method stringOf =
@@ -598,6 +598,12 @@ module Collections (D : ATOMIC_DATA) (C : CALLING) = struct
               Some (strObj (s ^ utf8 other))
           | _ -> None (* WrongType? fwd ref *) )
         | "size", [] -> Some (D.intObj (Z.of_int (UTF8.length s)))
+        | "_makeIterator", [] ->
+            (* XXX unicode? *)
+            let item (ix, ch) =
+              (D.intObj (Z.of_int ix), D.charObj (Char.code ch)) in
+            Some
+              (_makeIterator "<strIterator>" (Seq.map item (String.to_seqi s)))
         | _ -> None
 
       method stringOf =
@@ -610,6 +616,15 @@ module Collections (D : ATOMIC_DATA) (C : CALLING) = struct
       method unwrap = Some (MStr s)
     end
 
+  let unwrapPair specimen =
+    match specimen#unwrap with
+    | Some (MList [a; b]) -> (a, b)
+    (* XXX bad airity exception arm? *)
+    | _ ->
+        raise
+          (MonteException
+             (WrongType (MList [strObj "key"; strObj "val"], specimen)))
+
   let _makeList : monte =
     object
       method call verb args namedArgs =
@@ -620,11 +635,10 @@ module Collections (D : ATOMIC_DATA) (C : CALLING) = struct
               let ej, disable = C.ejectTo no_span in
               let rec loop revlist =
                 try
-                  let item = call_exn iterator "next" [ej] [] in
+                  let _, item = unwrapPair (call_exn iterator "next" [ej] []) in
                   loop (item :: revlist)
                 with MonteException (Ejecting (_, thrower)) as ex ->
-                  if thrower == ej then (disable () ; revlist) else raise ex
-              in
+                  if thrower == ej then revlist else raise ex in
               loop [] in
             Some (listObj (List.rev_append (build ()) []))
         | "run", _ -> Some (listObj args)
@@ -639,15 +653,6 @@ module Collections (D : ATOMIC_DATA) (C : CALLING) = struct
     match specimen#unwrap with
     | Some (MList l) -> l
     | _ -> raise (MonteException (WrongType (MList [], specimen)))
-
-  let unwrapPair specimen =
-    match specimen#unwrap with
-    | Some (MList [a; b]) -> (a, b)
-    (* XXX bad airity exception arm? *)
-    | _ ->
-        raise
-          (MonteException
-             (WrongType (MList [strObj "key"; strObj "val"], specimen)))
 
   let unwrapMap specimen =
     match specimen#unwrap with
