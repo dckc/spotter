@@ -129,6 +129,8 @@ let throwObj : monte =
   end
 
 module type CALLING = sig
+  val strObj : string -> monte (* XXX dup *)
+
   val calling : string -> monte list -> (monte * monte) list -> monte -> monte
   val ejectTo : mspan -> monte * (unit -> unit)
   val _loop : unit -> monte (* XXX singlton *)
@@ -142,13 +144,14 @@ module type ATOMIC_DATA = sig
   val unwrapBool : monte -> bool
   val intObj : Z.t -> monte
   val charObj : int -> monte
-  val strObj : string -> monte
-  val unwrapStr : monte -> string
+  val char_lit : int -> string
   val doubleObj : float -> monte
   val dataGuardObj : monteprim -> monte
 end
 
 module type COLLECTIONS = sig
+  val strObj : string -> monte
+  val unwrapStr : monte -> string
   val listObj : monte list -> monte
   val unwrapList : monte -> monte list
   val _makeList : monte
@@ -286,30 +289,6 @@ module AtomicData (C : CALLING) = struct
       method unwrap = Some (MInt i)
     end
 
-  let rec strObj s : monte =
-    object
-      method call verb (args : monte list) namedArgs : monte option =
-        match (verb, args) with
-        | "add", [otherObj] -> (
-          match otherObj#unwrap with
-          | Some (MStr other) -> Some (strObj (s ^ other))
-          | Some (MChar other) ->
-              let utf8 code = String.make 0 (Char.chr code) (* XXX *) in
-              Some (strObj (s ^ utf8 other))
-          | _ -> None (* WrongType? fwd ref *) )
-        | "size", [] -> Some (intObj (Z.of_int (UTF8.length s)))
-        | _ -> None
-
-      method stringOf =
-        let parts =
-          List.map
-            (fun ch -> char_lit (Char.code ch))
-            (List.of_seq (String.to_seq s)) in
-        "\"" ^ String.concat "" parts ^ "\""
-
-      method unwrap = Some (MStr s)
-    end
-
   let dataGuardObj example : monte =
     let name = prim_name example in
     object
@@ -321,7 +300,8 @@ module AtomicData (C : CALLING) = struct
           | _ ->
               Some
                 (call_exn exit "run"
-                   [strObj (specimen#stringOf ^ "does not conform to " ^ name)]
+                   [ C.strObj
+                       (specimen#stringOf ^ "does not conform to " ^ name) ]
                    []) )
         | _, _ -> None
 
@@ -337,7 +317,7 @@ module AtomicData (C : CALLING) = struct
         | "coerce", [specimen; exit] ->
             Some
               (call_exn exit "run"
-                 [strObj (specimen#stringOf ^ "does not conform to Void")]
+                 [C.strObj (specimen#stringOf ^ "does not conform to Void")]
                  [])
         | _, _ -> None
 
@@ -350,11 +330,6 @@ module AtomicData (C : CALLING) = struct
     match specimen#unwrap with
     | Some (MBool b) -> b
     | _ -> raise (MonteException (WrongType (MBool true, specimen)))
-
-  let unwrapStr specimen : string =
-    match specimen#unwrap with
-    | Some (MStr s) -> s
-    | _ -> raise (MonteException (WrongType (MStr "", specimen)))
 end
 
 module type STORAGE = sig
@@ -404,7 +379,8 @@ end
 
 module Calling (D : ATOMIC_DATA) (CD : COLLECTIONS) = struct
   let calling verb args namedArgs target = call_exn target verb args namedArgs
-  let throwStr ej msg = call_exn throwObj "eject" [ej; D.strObj msg] []
+  let strObj = CD.strObj
+  let throwStr ej msg = call_exn throwObj "eject" [ej; strObj msg] []
 
   let ejectTo span =
     let ej =
@@ -610,6 +586,30 @@ module Collections (D : ATOMIC_DATA) (C : CALLING) = struct
       method unwrap = Some (MMap pairs)
     end
 
+  and strObj s : monte =
+    object
+      method call verb (args : monte list) namedArgs : monte option =
+        match (verb, args) with
+        | "add", [otherObj] -> (
+          match otherObj#unwrap with
+          | Some (MStr other) -> Some (strObj (s ^ other))
+          | Some (MChar other) ->
+              let utf8 code = String.make 0 (Char.chr code) (* XXX *) in
+              Some (strObj (s ^ utf8 other))
+          | _ -> None (* WrongType? fwd ref *) )
+        | "size", [] -> Some (D.intObj (Z.of_int (UTF8.length s)))
+        | _ -> None
+
+      method stringOf =
+        let parts =
+          List.map
+            (fun ch -> D.char_lit (Char.code ch))
+            (List.of_seq (String.to_seq s)) in
+        "\"" ^ String.concat "" parts ^ "\""
+
+      method unwrap = Some (MStr s)
+    end
+
   let _makeList : monte =
     object
       method call verb args namedArgs =
@@ -647,12 +647,17 @@ module Collections (D : ATOMIC_DATA) (C : CALLING) = struct
     | _ ->
         raise
           (MonteException
-             (WrongType (MList [D.strObj "key"; D.strObj "val"], specimen)))
+             (WrongType (MList [strObj "key"; strObj "val"], specimen)))
 
   let unwrapMap specimen =
     match specimen#unwrap with
     | Some (MMap pairs) -> pairs
     | _ -> raise (MonteException (WrongType (MMap [], specimen)))
+
+  let unwrapStr specimen : string =
+    match specimen#unwrap with
+    | Some (MStr s) -> s
+    | _ -> raise (MonteException (WrongType (MStr "", specimen)))
 
   let _makeMap : monte =
     object
@@ -699,7 +704,7 @@ module SafeScope = struct
             let unwrapMessage specimen =
               match specimen#unwrap with
               | Some (MList [verbObj; argsObj; nargsObj]) ->
-                  ( D.unwrapStr verbObj
+                  ( CD.unwrapStr verbObj
                   , CD.unwrapList argsObj
                   , CD.unwrapMap nargsObj )
               | _ -> raise (MonteException (WrongType (MStr "", specimen)))
@@ -830,7 +835,7 @@ struct
   let charExpr c _ = State.return (D.charObj c)
   let doubleExpr d _ = State.return (D.doubleObj d)
   let intExpr i _ = State.return (D.intObj i)
-  let strExpr s _ = State.return (D.strObj s)
+  let strExpr s _ = State.return (CD.strObj s)
 
   let nounExpr n span =
     let get = C.calling "get" [] [] in
@@ -902,7 +907,7 @@ struct
       rv in
     let runMatchers env verb args namedArgs : monte option =
       let message =
-        CD.listObj [D.strObj verb; CD.listObj args; CD.mapObj namedArgs]
+        CD.listObj [CD.strObj verb; CD.listObj args; CD.mapObj namedArgs]
       and ej, disable = C.ejectTo span in
       let rec loop (ms : matcher list) : monte option =
         match ms with
@@ -1332,7 +1337,7 @@ module Loader = struct
         match (verb, args) with
         | "import", [_] ->
             raise
-              (MonteException (UserException (D.strObj "XXX loader not impl")))
+              (MonteException (UserException (CD.strObj "XXX loader not impl")))
         | _ -> None
 
       method stringOf = "<import>"
@@ -1353,7 +1358,7 @@ module Loader = struct
     let no_amp s =
       String.(if sub s 0 2 = "&&" then sub s 2 (length s - 2) else s) in
     let key_names =
-      List.map (fun (k, v) -> (no_amp (D.unwrapStr k), v)) pairs in
+      List.map (fun (k, v) -> (no_amp (CD.unwrapStr k), v)) pairs in
     Dict.of_seq (List.to_seq key_names)
 
   let getMonteFileObj read_mast : monte =
@@ -1361,7 +1366,7 @@ module Loader = struct
       method call verb (args : monte list) nargs =
         match (verb, args) with
         | "run", [filenameObj; scopeObj] ->
-            let filename = D.unwrapStr filenameObj ^ ".mast" in
+            let filename = CD.unwrapStr filenameObj ^ ".mast" in
             Some (load read_mast filename (unwrapScope scopeObj))
         | _ -> None
 
