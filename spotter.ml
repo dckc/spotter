@@ -470,6 +470,21 @@ end
 module Collections (D : ATOMIC_DATA) (C : CALLING) = struct
   module EQ = Sameness (D)
 
+  let unwrapList specimen =
+    match specimen#unwrap with
+    | Some (MList l) -> l
+    | _ -> raise (MonteException (WrongType (MList [], specimen)))
+
+  let unwrapMap specimen =
+    match specimen#unwrap with
+    | Some (MMap pairs) -> pairs
+    | _ -> raise (MonteException (WrongType (MMap [], specimen)))
+
+  let unwrapStr specimen : string =
+    match specimen#unwrap with
+    | Some (MStr s) -> s
+    | _ -> raise (MonteException (WrongType (MStr "", specimen)))
+
   let flexMapObj (init : (monte * monte) list) : monte =
     object
       val mutable pairs = init
@@ -518,6 +533,7 @@ module Collections (D : ATOMIC_DATA) (C : CALLING) = struct
     object
       method call verb args namedArgs =
         match (verb, args) with
+        | "add", [other] -> Some (listObj (l @ unwrapList other))
         | "asMap", [] when l = [] -> Some (mapObj [])
         | "diverge", [] -> Some (flexListObj l)
         | "size", [] -> Some (D.intObj (Z.of_int (List.length l)))
@@ -616,7 +632,7 @@ module Collections (D : ATOMIC_DATA) (C : CALLING) = struct
       method unwrap = Some (MStr s)
     end
 
-  let unwrapPair specimen =
+  and unwrapPair specimen =
     match specimen#unwrap with
     | Some (MList [a; b]) -> (a, b)
     (* XXX bad airity exception arm? *)
@@ -648,21 +664,6 @@ module Collections (D : ATOMIC_DATA) (C : CALLING) = struct
 
       method unwrap = None
     end
-
-  let unwrapList specimen =
-    match specimen#unwrap with
-    | Some (MList l) -> l
-    | _ -> raise (MonteException (WrongType (MList [], specimen)))
-
-  let unwrapMap specimen =
-    match specimen#unwrap with
-    | Some (MMap pairs) -> pairs
-    | _ -> raise (MonteException (WrongType (MMap [], specimen)))
-
-  let unwrapStr specimen : string =
-    match specimen#unwrap with
-    | Some (MStr s) -> s
-    | _ -> raise (MonteException (WrongType (MStr "", specimen)))
 
   let _makeMap : monte =
     object
