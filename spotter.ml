@@ -140,6 +140,7 @@ end
 
 module type ATOMIC_DATA = sig
   val voidGuardObj : unit -> monte
+  val anyGuardObj : unit -> monte
   val boolObj : bool -> monte
   val unwrapBool : monte -> bool
   val intObj : Z.t -> monte
@@ -319,6 +320,18 @@ module AtomicData (C : CALLING) = struct
               (call_exn exit "run"
                  [C.strObj (specimen#stringOf ^ "does not conform to Void")]
                  [])
+        | _, _ -> None
+
+      method stringOf = "Void"
+
+      method unwrap = None
+    end
+
+  let anyGuardObj () : monte =
+    object
+      method call verb args nargs =
+        match (verb, args) with
+        | "coerce", [specimen; exit] -> Some specimen
         | _, _ -> None
 
       method stringOf = "Void"
@@ -790,11 +803,12 @@ module SafeScope = struct
       ; ("_makeSourceSpan", todoObj "_makeSourceSpan")
       ; ("_makeStr", todoObj "_makeStr")
       ; ("_makeVarSlot", todoObj "_makeVarSlot"); ("M", theMObj)
+      ; ("_mapExtract", CD._mapExtract)
       ; ("_slotToBinding", todoObj "_slotToBinding")
       ; ("loadMAST", todoObj "loadMAST")
       ; ("makeLazySlot", todoObj "makeLazySlot")
       ; ("promiseAllFulfilled", todoObj "promiseAllFulfilled")
-      ; ("throw", throwObj); ("Any", todoGuardObj "Any")
+      ; ("throw", throwObj); ("Any", D.anyGuardObj ())
       ; ("traceln", traceObj "traceln" "\n" print_str); ("true", D.boolObj true)
       ; ("trace", traceObj "trace" "" print_str)
       ; ( "typhonAstBuilder"
