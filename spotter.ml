@@ -596,6 +596,13 @@ module Collections (D : ATOMIC_DATA) (C : CALLING) = struct
                 with
               | Some (_, v) -> v
               | _ -> C.throwStr throwObj "not found" )
+        | "fetch", [needle; ej] ->
+            Some
+              ( match
+                  List.find_opt (fun (k, _) -> EQ.sameEver k needle) pairs
+                with
+              | Some (_, v) -> v
+              | _ -> C.throwStr ej "not found" )
         | "getKeys", [] -> Some (listObj (List.map fst pairs))
         | "getValues", [] -> Some (listObj (List.map snd pairs))
         | "without", [k0] ->
