@@ -159,6 +159,7 @@ module type COLLECTIONS = sig
   val mapObj : (monte * monte) list -> monte
   val unwrapMap : monte -> (monte * monte) list
   val _makeMap : monte
+  val _mapExtract : monte
 end
 
 module type MAST = sig
@@ -691,6 +692,34 @@ module Collections (D : ATOMIC_DATA) (C : CALLING) = struct
 
       method unwrap = None
     end
+
+  (* XXX _mapExtract belongs in prelude. *)
+  let _mapExtract : monte =
+    object
+      method stringOf = "_mapExtract"
+
+      method call verb (args : monte list) namedArgs : monte option =
+        match (verb, args) with
+        | "run", [key] ->
+            let extractor : monte =
+              object
+                method stringOf = "_mapExtractor"
+
+                method call verb (args : monte list) nargs : monte option =
+                  match (verb, args) with
+                  | "run", [specimen; ej] ->
+                      let value = call_exn specimen "fetch" [key; ej] [] in
+                      let rest = call_exn specimen "without" [key] [] in
+                      Some (listObj [value; rest])
+                  | _ -> None
+
+                method unwrap = None
+              end in
+            Some extractor
+        | _ -> None
+
+      method unwrap = None
+    end
 end
 
 module SafeScope = struct
@@ -753,16 +782,19 @@ module SafeScope = struct
       method unwrap = None
     end
 
-  let todoGuardObj name : monte =
+  let rec todoGuardObj name : monte =
     object
       method call verb args nargs =
         match (verb, args) with
         | "coerce", [specimen; exit] ->
             Printf.printf "\nXXX %s.coerce(...) not implemented\n" name ;
             Some specimen
+        | "get", _ ->
+            Printf.printf "\nXXX %s.get(...) not implemented\n" name ;
+            Some (todoGuardObj (name ^ ".get(...)"))
         | _ -> None
 
-      method stringOf = "DeepFrozenStamp"
+      method stringOf = name
 
       method unwrap = None
     end
@@ -784,7 +816,9 @@ module SafeScope = struct
       ; ("DeepFrozenStamp", todoGuardObj "DeepFrozenStamp")
       ; ("Double", D.dataGuardObj (MDouble 1.0))
       ; ("Infinity", D.doubleObj infinity); ("NaN", D.doubleObj nan)
-      ; ("Int", D.dataGuardObj (MInt Z.zero)); ("Near", todoGuardObj "Near")
+      ; ("Int", D.dataGuardObj (MInt Z.zero))
+      ; ("Near", todoGuardObj "Near") (* XXX List belongs in prelude. *)
+      ; ("List", todoGuardObj "List")
       ; ("KernelAstStamp", todoObj "KernelAstStamp")
       ; ("Same", todoGuardObj "Same"); ("Ref", theRefObj)
       ; ("astEval", todoObj "astEval"); ("Selfless", todoGuardObj "Selfless")
@@ -881,7 +915,10 @@ struct
     State.bind target (fun t ->
         State.bind (sequence args) (fun a ->
             State.bind (sequence namedArgs) (fun na ->
-                State.return (call_exn t verb a na))))
+                State.return
+                  ( Printf.printf "\n(calling at %s: %s.%s/%d)"
+                      (string_of_span span) t#stringOf verb (List.length args) ;
+                    call_exn t verb a na ))))
 
   let defExpr patt exitOpt expr span =
     let withOptionalExpr exprOpt d f =
@@ -1083,7 +1120,9 @@ module InputTools = struct
 
   exception InvalidMAST of (string * int)
 
-  let throw_invalid_mast ic message = raise (InvalidMAST (message, pos_in ic))
+  let throw_invalid_mast ic message =
+    (* Printf.printf "invalid mast at %d: %s\n" (pos_in ic) message; *)
+    raise (InvalidMAST (message, pos_in ic))
 
   let input_span ic =
     match input_char ic with
@@ -1093,7 +1132,8 @@ module InputTools = struct
     | 'B' ->
         Blob
           (input_varint ic, input_varint ic, input_varint ic, input_varint ic)
-    | _ -> throw_invalid_mast ic "input_span"
+    | oops ->
+        throw_invalid_mast ic ("input_span unknown tag:" ^ Char.escaped oops)
 
   let input_str ic = really_input_string ic (Z.to_int (input_varint ic))
 
@@ -1142,7 +1182,7 @@ module MASTContext (Monte : MAST) = struct
     | HMatch of Monte.matcher
 
   let logged label ch =
-    (* XXX Printf.printf "%s%c..." label ch; *)
+    (* Printf.printf "XXX %s%c..." label ch; *)
     ch
 
   let make () =
@@ -1163,7 +1203,9 @@ module MASTContext (Monte : MAST) = struct
         match input_char ic with
         | 'S' -> Monte.oneToOne (v4 ic)
         | 'B' -> Monte.blob (v4 ic)
-        | _ -> throw_invalid_mast ic "input_span"
+        | oops ->
+            throw_invalid_mast ic
+              ("input_span unknown tag:" ^ Char.escaped oops)
 
       method private eat_expr ic =
         match exprs#get (Z.to_int (input_varint ic)) with
@@ -1268,7 +1310,7 @@ module MASTContext (Monte : MAST) = struct
                   HExpr (e (self#eat_span ic)) )
         | tag ->
             let expr =
-              match logged "expr tag" tag with
+              match logged ("expr tag@" ^ Int.to_string (pos_in ic)) tag with
               | 'N' -> Monte.nounExpr (input_str ic)
               | 'B' -> Monte.bindingExpr (input_str ic)
               | 'S' -> Monte.seqExpr (input_many self#eat_expr ic)
@@ -1324,7 +1366,9 @@ module MASTContext (Monte : MAST) = struct
                   Monte.ifExpr test cons alt
               | 'T' -> Monte.metaStateExpr
               | 'X' -> Monte.metaContextExpr
-              | x -> throw_invalid_mast ic ("eat_tag:" ^ Char.escaped x) in
+              | x ->
+                  Printf.printf "XXX eat_tag unrecognized: '%c'\n" x ;
+                  throw_invalid_mast ic ("eat_tag:" ^ Char.escaped x) in
             exprs#push (HExpr (expr (self#eat_span ic)))
 
       method eat_all_exprs ic =
@@ -1367,14 +1411,22 @@ module Loader = struct
       List.map (fun (k, v) -> (no_amp (CD.unwrapStr k), v)) pairs in
     Dict.of_seq (List.to_seq key_names)
 
+  let moduleStub name =
+    CD.mapObj [(CD.strObj name, funObj name (fun args nargs -> Some nullObj))]
+
   let loaderObj read_mast =
-    object
+    object (self)
       method call verb args namedArgs =
         match (verb, args) with
         | "import", [petname] ->
             let filename = CD.unwrapStr petname ^ ".mast" in
-            let scope = SafeScope.safeScope (fun s -> Printf.printf "%s" s) in
-            Some (load read_mast filename scope)
+            if filename = "unittest.mast" then Some (moduleStub "unittest")
+            else if filename = "bench.mast" then Some (moduleStub "bench")
+            else
+              let scope = SafeScope.safeScope (fun s -> Printf.printf "%s" s) in
+              let mmod = load read_mast filename scope in
+              Printf.printf "%s: run module\n" petname#stringOf ;
+              Some (call_exn mmod "run" [self] [])
         | _ -> None
 
       method stringOf = "<import>"
@@ -1430,7 +1482,10 @@ module Loader = struct
         Printf.printf "[%i] %s: run module\n" i filename ;
         let result = call_exn mmod "run" [loaderObj read_mast] [] in
         Printf.printf "=out=> %s\n" result#stringOf
-      with MonteException m -> Printf.printf "\n%s\n" (string_of_mexn m)
+      with
+      | MonteException m -> Printf.printf "\n%s\n" (string_of_mexn m)
+      | InputTools.InvalidMAST (msg, pos) ->
+          Printf.printf "invalid mast at %d: %s\n" pos msg
     done
 end
 
