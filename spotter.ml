@@ -214,7 +214,7 @@ module type MAST = sig
     -> meth
 
   val matche : patt -> t -> span -> matcher
-  val namedArg : t -> t -> span -> narg
+  val namedArg : t -> t -> narg
   val namedParam : t -> patt -> t option -> span -> nparam
   val ignorePatt : t option -> span -> patt
   val finalPatt : string -> t option -> span -> patt
@@ -1012,7 +1012,7 @@ struct
 
   let matche patt body span = (patt, body)
 
-  let namedArg key value span =
+  let namedArg key value =
     State.bind key (fun k -> State.bind value (fun v -> State.return (k, v)))
 
   let namedParam key patt defaultOpt span map =
@@ -1262,7 +1262,7 @@ module MASTContext (Monte : MAST) = struct
                   let eat_narg ic =
                     let n = self#eat_expr ic in
                     let v = self#eat_expr ic in
-                    Monte.namedArg n v (self#eat_span ic) in
+                    Monte.namedArg n v in
                   let t = self#eat_expr ic in
                   let v = input_str ic in
                   let a = input_many self#eat_expr ic in
