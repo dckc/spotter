@@ -1337,20 +1337,6 @@ module Loader = struct
   module Compiler = Compiler (D) (CD) (C) (S)
   module M = MASTContext (Compiler)
 
-  let loaderObj =
-    object
-      method call verb args namedArgs =
-        match (verb, args) with
-        | "import", [_] ->
-            raise
-              (MonteException (UserException (CD.strObj "XXX loader not impl")))
-        | _ -> None
-
-      method stringOf = "<import>"
-
-      method unwrap = None
-    end
-
   let load read_mast (filename : string) (scope : monte Dict.t) : monte =
     Printf.printf "%s: read mast\n" filename ;
     let expr = read_mast filename in
@@ -1366,6 +1352,21 @@ module Loader = struct
     let key_names =
       List.map (fun (k, v) -> (no_amp (CD.unwrapStr k), v)) pairs in
     Dict.of_seq (List.to_seq key_names)
+
+  let loaderObj read_mast =
+    object
+      method call verb args namedArgs =
+        match (verb, args) with
+        | "import", [petname] ->
+            let filename = CD.unwrapStr petname ^ ".mast" in
+            let scope = SafeScope.safeScope (fun s -> Printf.printf "%s" s) in
+            Some (load read_mast filename scope)
+        | _ -> None
+
+      method stringOf = "<import>"
+
+      method unwrap = None
+    end
 
   let getMonteFileObj read_mast : monte =
     object
@@ -1413,7 +1414,7 @@ module Loader = struct
       try
         let mmod = load read_mast filename ioScope in
         Printf.printf "[%i] %s: run module\n" i filename ;
-        let result = call_exn mmod "run" [loaderObj] [] in
+        let result = call_exn mmod "run" [loaderObj read_mast] [] in
         Printf.printf "=out=> %s\n" result#stringOf
       with MonteException m -> Printf.printf "\n%s\n" (string_of_mexn m)
     done
